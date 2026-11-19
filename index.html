@@ -164,6 +164,14 @@ body.rot .screen { inset: auto; top: 50%; left: 50%; width: var(--H); height: va
 .list .n { background: rgba(255,122,26,.16); color: #ffc38f; text-decoration: line-through; text-decoration-thickness: 2px; }
 .list .g { background: rgba(255,207,58,.22); color: var(--gold); }
 
+/* recording: a small live mirror and a REC light during the round; the clip on the results screen */
+.cam { position: absolute; z-index: 3; bottom: 14px; left: 50%; transform: translateX(-50%); padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.25); }
+.cam video { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+.cam i { display: flex; align-items: center; gap: 5px; font-style: normal; font-size: 12px; font-weight: 900; color: #fff; letter-spacing: 2px; }
+.cam i::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #ff2d55; box-shadow: 0 0 6px #ff2d55; animation: blink 1s infinite; }
+.res .clip { height: min(34vmin, 220px); aspect-ratio: 16 / 9; border-radius: 14px; background: #000; border: 3px solid rgba(255,207,58,.5); object-fit: contain; }
+.share { padding: 1.2vmin 3vmin; border-radius: 999px; background: linear-gradient(180deg, #ff6aa8, var(--hot)); font-weight: 900; font-size: min(3.4vmin, 17px); box-shadow: 0 4px 0 #9b1450; }
+.share:active { transform: translateY(3px); box-shadow: 0 1px 0 #9b1450; }
 #fx { position: fixed; inset: 0; pointer-events: none; z-index: 8; }
 .hapt { position: fixed; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
 
@@ -195,6 +203,7 @@ body.rot .screen { inset: auto; top: 50%; left: 50%; width: var(--H); height: va
   <h1 class="logo"><small>המשחק של</small>על המצח</h1>
   <div class="decks" id="decks"></div>
   <div class="row" id="times"></div>
+  <div class="row"><button class="pill" id="recBtn"></button></div>
   <p class="how"><b>מורידים את הטלפון קדימה</b> = ניחשתי · <b>מרימים אחורה</b> = דלג · אפשר גם להחליק</p>
   <p class="best" id="best"></p>
 </section>
@@ -224,6 +233,7 @@ body.rot .screen { inset: auto; top: 50%; left: 50%; width: var(--H); height: va
   <div class="verdict" id="verdict"></div>
   <div class="streak" id="streak"></div>
   <div class="bumba" id="bumba"><div class="body"><i class="eye l"></i><i class="eye r"></i><i class="mouth"></i></div></div>
+  <div class="cam" id="cam" hidden><video id="camVid" playsinline muted autoplay></video><i>REC</i></div>
   <div class="bar"><i id="barFill"></i></div>
 </section>
 
@@ -231,11 +241,12 @@ body.rot .screen { inset: auto; top: 50%; left: 50%; width: var(--H); height: va
   <div class="res">
     <div class="bumba big" id="bumbaBig"><div class="body"><i class="eye l"></i><i class="eye r"></i><i class="mouth"></i></div></div>
     <div class="board"><small>התוצאה</small><p class="score" id="finalScore">0</p></div>
+    <video class="clip" id="clip" playsinline controls hidden></video>
   </div>
   <p class="rank" id="rank"></p>
   <p class="stats" id="stats"></p>
   <div class="list" id="list"></div>
-  <div class="row"><button class="go" id="againBtn">עוד סיבוב</button><button class="ghost" id="homeBtn">חפיסה אחרת</button></div>
+  <div class="row"><button class="go" id="againBtn">עוד סיבוב</button><button class="share" id="shareBtn" hidden>שמירה / שליחה של הסרטון</button><button class="ghost" id="homeBtn">חפיסה אחרת</button></div>
 </section>
 
 <canvas id="fx"></canvas>
@@ -256,7 +267,7 @@ const ALL = { name: 'הכול מעורבב', note: 'כל החפיסות', c: '#d
 
 const $ = (id) => document.getElementById(id);
 const store = { get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* ignore */ } } };
-let deckKey = 'all', secs = store.get('mz-secs', 60), muted = store.get('mz-mute', false);
+let deckKey = 'all', secs = store.get('mz-secs', 60), muted = store.get('mz-mute', false), recOn = store.get('mz-rec', true);
 let G = null;
 
 // ---------- sound: everything is synthesized ----------
@@ -388,6 +399,8 @@ function buildHome() {
   const best = store.get('mz-best', 0); $('best').textContent = best ? `השיא שלכם: ${best}` : '';
 }
 function setMute(m) { muted = m; store.set('mz-mute', m); $('soundBtn').textContent = m ? '🔇' : '🔊'; if (master) master.gain.value = m ? 0 : 0.9; }
+function setRec(on) { recOn = on; store.set('mz-rec', on); const b = $('recBtn'); b.textContent = on ? '● מצלמים את הסיבוב' : '○ בלי צילום'; b.classList.toggle('on', on); }
+$('recBtn').addEventListener('click', () => { audio(); SFX.ui(); setRec(!recOn); });
 $('soundBtn').addEventListener('click', () => { audio(); setMute(!muted); if (!muted) SFX.ui(); });
 
 // ---------- a round ----------
@@ -402,7 +415,7 @@ function pool() {
 let wake = null;
 async function keepAwake() { try { wake = await navigator.wakeLock.request('screen'); } catch (e) { wake = null; } }
 function start() {
-  audio(); askTilt(); keepAwake();
+  audio(); askTilt(); keepAwake(); if (recOn) camOpen();
   try { screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {}); } catch (e) { /* ignore */ }
   show('count');
   let k = 3;
@@ -458,12 +471,12 @@ function answer(ok) {
   play.classList.remove('yes', 'no');
   if (ok) {
     G.score += it.gold ? 2 : 1; G.streak++; G.bestStreak = Math.max(G.bestStreak, G.streak);
-    play.classList.add('yes'); v.textContent = it.gold ? '+2!' : 'נכון!';
+    play.classList.add('yes'); v.textContent = it.gold ? '+2!' : 'נכון!'; R.flash = { ok: true, t: performance.now(), txt: v.textContent };
     SFX.yes(G.streak); buzz(45); confetti(it.gold ? 70 : 28 + G.streak * 4, it.gold);
     floatPlus(it.gold ? '+2' : '+1'); mascot('happy');
     if (G.streak % 3 === 0) comboBanner(G.streak);
   } else {
-    G.streak = 0; play.classList.add('no'); v.textContent = 'דלג';
+    G.streak = 0; play.classList.add('no'); v.textContent = 'דלג'; R.flash = { ok: false, t: performance.now(), txt: 'דלג' };
     SFX.no(); buzz([70, 50, 70]); mascot('sad');
   }
   $('score').textContent = G.score;
@@ -491,7 +504,7 @@ function finish() {
   cancelAnimationFrame(G.raf); beatOff();
   const r = G; G = null;
   try { wake && wake.release(); } catch (e) { /* ignore */ }
-  SFX.buzzer(); buzz([300, 100, 300]);
+  SFX.buzzer(); buzz([300, 100, 300]); R.final = r.score; setTimeout(recStop, 1300);
   setTimeout(() => {
     show('done');
     const best = store.get('mz-best', 0), isBest = r.score > best && r.score > 0; if (isBest) store.set('mz-best', r.score);
@@ -509,9 +522,99 @@ function finish() {
       else if (r.score >= 6 || isBest) { SFX.fanfare(); confetti(170, isBest); buzz([60, 60, 60, 60, 160]); }
       else SFX.aww();
     };
-    up();
+    up(); showClip();
   }, 1100);
 }
+
+// ---------- recording: the front camera, the word and the score burned in, the room's laughs and the game's sounds ----------
+// nothing leaves the phone: the clip lives in memory until it is saved or the page is closed
+const R = { stream: null, rec: null, chunks: [], url: null, blob: null, raf: 0, flash: null, final: null, canvas: null, ready: false };
+async function camOpen() {
+  clipReset();
+  if (R.stream) { recStart(); return; }
+  try {
+    R.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: { echoCancellation: false, noiseSuppression: false } });
+  } catch (e) {
+    try { R.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false }); } catch (e2) { R.stream = null; }
+  }
+  if (!R.stream) { note('אין גישה למצלמה, משחקים בלי צילום'); return; }
+  const v = $('camVid'); v.srcObject = R.stream; try { await v.play(); } catch (e) { /* ignore */ }
+  recStart();
+}
+function recStart() {
+  if (!R.stream || !window.MediaRecorder) return;
+  const a = audio();
+  const W = 1280, H = 720, c = R.canvas || (R.canvas = document.createElement('canvas')); c.width = W; c.height = H;
+  const g = c.getContext('2d'), v = $('camVid');
+  const tracks = c.captureStream(30).getVideoTracks();
+  if (a) {   // the game's sounds and the room's microphone, mixed into the clip (the mic is not played out loud)
+    const dest = a.createMediaStreamDestination(); master.connect(dest);
+    const mics = R.stream.getAudioTracks();
+    if (mics.length) { const src = a.createMediaStreamSource(new MediaStream(mics)), mg = a.createGain(); mg.gain.value = 1.4; src.connect(mg).connect(dest); }
+    R.dest = dest; tracks.push(...dest.stream.getAudioTracks());
+  }
+  const types = ['video/mp4;codecs=avc1,mp4a', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm'];
+  const type = types.find((t) => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } }) || '';
+  try { R.rec = new MediaRecorder(new MediaStream(tracks), type ? { mimeType: type, videoBitsPerSecond: 3500000 } : undefined); } catch (e) { R.rec = null; return; }
+  R.chunks = []; R.type = R.rec.mimeType || type || 'video/mp4';
+  R.rec.ondataavailable = (e) => { if (e.data && e.data.size) R.chunks.push(e.data); };
+  R.rec.onstop = () => { R.blob = new Blob(R.chunks, { type: R.type }); R.url = URL.createObjectURL(R.blob); R.ready = true; showClip(); };
+  R.rec.start(500);
+  $('cam').hidden = false;
+  const draw = () => {
+    R.raf = requestAnimationFrame(draw);
+    g.fillStyle = '#0a0a2a'; g.fillRect(0, 0, W, H);
+    if (v.videoWidth) {
+      // the camera frame follows the phone; turn it like the screen so people stand upright, mirrored like a selfie
+      const turned = rotated(), vw = turned ? v.videoHeight : v.videoWidth, vh = turned ? v.videoWidth : v.videoHeight;
+      const k = Math.max(W / vw, H / vh);
+      g.save(); g.translate(W / 2, H / 2); g.scale(-1, 1); if (turned) g.rotate(turn * Math.PI / 180);
+      g.drawImage(v, -v.videoWidth * k / 2, -v.videoHeight * k / 2, v.videoWidth * k, v.videoHeight * k); g.restore();
+    }
+    // the show on top: the word on a lit band, time and score
+    const word = G ? G.q[G.i].w : (R.final != null ? `התוצאה: ${R.final}` : $('countN').textContent);
+    g.fillStyle = 'rgba(20,13,68,.86)'; g.fillRect(0, 0, W, 132);
+    g.fillStyle = '#ffcf3a'; g.fillRect(0, 132, W, 6);
+    g.direction = 'rtl'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = "84px 'Secular One', Rubik, sans-serif"; g.fillStyle = '#fff8ec'; g.fillText(word, W / 2, 70, W - 330);
+    if (G) {
+      g.font = "900 44px Rubik, sans-serif"; g.fillStyle = '#ffcf3a'; g.textAlign = 'left'; g.direction = 'ltr';
+      g.fillText(String(Math.ceil(Math.max(0, G.end - performance.now()) / 1000)), 40, 70);
+      g.textAlign = 'right'; g.fillStyle = '#3fe0ff'; g.fillText(String(G.score), W - 40, 70);
+    }
+    const f = R.flash;
+    if (f && performance.now() - f.t < 700) {
+      const a2 = 1 - (performance.now() - f.t) / 700;
+      g.fillStyle = f.ok ? `rgba(25,213,124,${0.45 * a2})` : `rgba(255,122,26,${0.45 * a2})`; g.fillRect(0, 138, W, H - 138);
+      g.save(); g.translate(W / 2, H * 0.6); g.rotate(-0.1); g.globalAlpha = Math.min(1, a2 * 1.6);
+      g.direction = 'rtl'; g.textAlign = 'center'; g.font = "150px 'Secular One', Rubik, sans-serif"; g.fillStyle = '#fff'; g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 10;
+      g.strokeText(f.txt, 0, 0); g.fillText(f.txt, 0, 0); g.restore();
+    }
+    g.font = "700 22px Rubik, sans-serif"; g.fillStyle = 'rgba(255,255,255,.7)'; g.textAlign = 'right'; g.direction = 'rtl'; g.fillText('על המצח', W - 24, H - 26);
+  };
+  draw();
+}
+function recStop() {
+  cancelAnimationFrame(R.raf); $('cam').hidden = true;
+  try { if (R.rec && R.rec.state !== 'inactive') R.rec.stop(); } catch (e) { /* ignore */ }
+  try { if (R.dest) master.disconnect(R.dest); } catch (e) { /* ignore */ }
+  R.dest = null; R.final = null;
+}
+function camClose() { if (R.stream) { R.stream.getTracks().forEach((t) => t.stop()); R.stream = null; } }
+function clipReset() { if (R.url) URL.revokeObjectURL(R.url); R.url = null; R.blob = null; R.ready = false; $('clip').hidden = true; $('clip').removeAttribute('src'); $('shareBtn').hidden = true; }
+function showClip() {
+  if (!R.ready || $('done').hidden) return;
+  const c = $('clip'); c.src = R.url; c.hidden = false; $('shareBtn').hidden = false;
+}
+async function shareClip() {
+  if (!R.blob) return;
+  const ext = R.type.includes('mp4') ? 'mp4' : 'webm', name = `al-hametzach-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.${ext}`;
+  const file = new File([R.blob], name, { type: R.type.split(';')[0] });
+  try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'על המצח' }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  const a = document.createElement('a'); a.href = R.url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+let noteT = 0;
+function note(msg) { const b = $('best'); const old = b.textContent; b.textContent = msg; clearTimeout(noteT); noteT = setTimeout(() => { b.textContent = old; }, 4000); }
 
 // ---------- input ----------
 // swipe and tap, measured along the show's own up/down even when it is turned sideways
@@ -557,10 +660,11 @@ function askTilt() {
 
 $('goBtn').addEventListener('click', () => { SFX.ui(); start(); });
 $('backBtn').addEventListener('click', () => { SFX.ui(); show('home'); });
+$('shareBtn').addEventListener('click', shareClip);
 $('againBtn').addEventListener('click', () => { audio(); SFX.ui(); show('ready'); });
-$('homeBtn').addEventListener('click', () => { SFX.ui(); buildHome(); show('home'); });
+$('homeBtn').addEventListener('click', () => { SFX.ui(); camClose(); clipReset(); buildHome(); show('home'); });
 addEventListener('resize', () => { sizeAll(); if (G) fitWord(); });
-setMute(muted); buildHome(); show('home'); sizeAll();
+setMute(muted); setRec(recOn); buildHome(); show('home'); sizeAll();
 })();
 </script>
 
